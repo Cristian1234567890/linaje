@@ -204,18 +204,30 @@ def extract_tables_from_from_clause(from_clause: str) -> list:
     tmp = re.sub(r'\bjoin\b', ',', norm)
     tmp = re.sub(r'\bon\b.*', '', tmp)  # eliminar condiciones ON (simplifica)
     parts = top_level_split(tmp, delimiter=',')
+    reserved = set(['select','from','where','join','on','left','right','inner','outer','full','as','group','order','by','limit','union','insert','into','table','with','stored','parquet','if','not','exists'])
     for p in parts:
         p = p.strip()
         # buscar pattern schema.table (ej. sbani.tablacontacta)
         m = re.search(r'([a-z0-9_]+\.[a-z0-9_]+)', p)
+        tabla = None
+        alias = None
         if m:
             tabla = m.group(1)
             # buscar alias (as alias o simple alias)
-            alias = None
-            # buscar ' as alias'
             m2 = re.search(r'\b' + re.escape(tabla) + r'\b\s+(?:as\s+)?([a-z0-9_]+)', p)
             if m2:
                 alias = m2.group(1)
+        else:
+            # intentar detectar nombre de tabla sin esquema (primer token no reservado)
+            mb = re.search(r'\b([a-z_][a-z0-9_]*)\b', p)
+            if mb:
+                cand = mb.group(1)
+                if cand not in reserved:
+                    tabla = cand
+                    m2 = re.search(r'\b' + re.escape(tabla) + r'\b\s+(?:as\s+)?([a-z0-9_]+)', p)
+                    if m2:
+                        alias = m2.group(1)
+        if tabla:
             res.append((tabla, alias))
     return res
 
@@ -272,22 +284,39 @@ def resolve_table_from_token(token: str, src_tables: list) -> str:
         return uniques[0]
     return None
 
+def _fallback_tabla_origen(rec: dict, src_tables: list) -> None:
+    """Si no se resolvió tabla_origen y hay una única tabla fuente, úsala."""
+    try:
+        if rec.get('tabla_origen') is None and src_tables:
+            uniques = []
+            for full, _alias in src_tables:
+                if full not in uniques:
+                    uniques.append(full)
+            if len(uniques) == 1:
+                rec['tabla_origen'] = uniques[0]
+    except Exception:
+        # fallback silencioso para no romper flujo
+        pass
+
 def parse_ctes(stmt: str) -> dict:
     """
     Extrae definiciones de CTE a partir de una sentencia que comienza con WITH.
     Devuelve dict nombre_cte -> texto_select_de_cte
     """
     cte_map = {}
-    if not stmt.strip().startswith('with '):
+    stmt = stmt.strip()
+    with_pos = find_top_level_keyword(stmt, 'with', 0)
+    if with_pos == -1:
         return cte_map
-    pos_insert = find_top_level_keyword(stmt, 'insert', 0)
-    pos_create = find_top_level_keyword(stmt, 'create', 0)
-    pos_select = find_top_level_keyword(stmt, 'select', 0)
-    candidates = [p for p in [pos_insert, pos_create, pos_select] if p and p > 0]
-    if not candidates:
-        return cte_map
-    main_pos = min(candidates)
-    defs_str = stmt[len('with '):main_pos].strip()
+    pos_insert = find_top_level_keyword(stmt, 'insert', with_pos)
+    pos_create = find_top_level_keyword(stmt, 'create', with_pos)
+    pos_select = find_top_level_keyword(stmt, 'select', with_pos)
+    candidates = [p for p in [pos_insert, pos_create, pos_select] if p != -1]
+    if candidates:
+        main_pos = min(candidates)
+        defs_str = stmt[with_pos + len('with'):main_pos].strip()
+    else:
+        defs_str = stmt[with_pos + len('with'):].strip()
     if not defs_str:
         return cte_map
     defs = top_level_split(defs_str, delimiter=',')
@@ -303,23 +332,35 @@ def parse_ctes(stmt: str) -> dict:
 
 def get_src_tables_with_ctes(from_clause: str, cte_map: dict) -> list:
     """
-    Retorna tablas fuente incluyendo expansiÃ³n de CTEs referenciados en el from_clause.
+    Retorna tablas fuente incluyendo expansión de CTEs referenciados en el from_clause.
     """
-    src_tables = extract_tables_from_from_clause(from_clause)
-    if not cte_map:
-        return src_tables
-    # por cada CTE, si es referenciado, aÃ±adimos sus tablas fÃ­sicas como si fueran parte del FROM
-    for cte_name, cte_sql in cte_map.items():
-        # detectar uso del CTE y posible alias
-        m = re.search(r'\b' + re.escape(cte_name) + r'\b(?:\s+(?:as\s+)?([a-z0-9_]+))?', from_clause)
-        if not m:
-            continue
-        cte_alias = m.group(1) if m.group(1) else cte_name
+    base_tables = extract_tables_from_from_clause(from_clause)
+    expanded = []
+    for table_name, alias in base_tables:
+        expanded.extend(_expand_table_reference(table_name, alias, cte_map, set()))
+    return expanded
+
+def _expand_table_reference(table_name: str, alias: str, cte_map: dict, visited: set) -> list:
+    """Expande CTEs recursivamente hasta llegar a tablas físicas."""
+    if table_name in visited:
+        return []
+    if table_name in cte_map:
+        visited.add(table_name)
+        cte_sql = cte_map[table_name]
         inner_from = extract_from_clause(cte_sql)
         inner_tables = extract_tables_from_from_clause(inner_from)
-        for (full, _alias) in inner_tables:
-            src_tables.append((full, cte_alias))
-    return src_tables
+        expanded = []
+        for inner_table, inner_alias in inner_tables:
+            propagated_alias = alias if alias else inner_alias
+            res = _expand_table_reference(inner_table, propagated_alias, cte_map, visited)
+            if res:
+                expanded.extend(res)
+            else:
+                expanded.append((inner_table, propagated_alias))
+        visited.remove(table_name)
+        return expanded
+    else:
+        return [(table_name, alias)]
 
 # -------------------------
 # Parseo de target table y columnas (insert/create)
@@ -334,16 +375,16 @@ def parse_insert_target(stmt: str):
     ins_pos = find_top_level_keyword(stmt, 'insert', 0)
     if ins_pos == -1:
         return None, None
-    # buscar 'into' despuÃ©s de insert
+    # buscar 'into' después de insert
     into_pos = find_top_level_keyword(stmt, 'into', ins_pos)
     # hay casos 'insert overwrite' -> handle: buscar 'overwrite' y luego 'into'
     if into_pos == -1:
         # tal vez 'insert overwrite table <table>' => buscamos 'table' o directamente schema.table
-        # fallback: buscar primer schema.table despuÃ©s de insert
-        m = re.search(r'([a-z0-9_]+\.[a-z0-9_]+)', stmt[ins_pos:])
+        # fallback: buscar primer nombre de tabla después de insert
+        m = re.search(r'([a-z0-9_]+(?:\.[a-z0-9_]+)?)', stmt[ins_pos:])
         if m:
             tabla = m.group(1)
-            # ver si hay lista de columnas entre parÃ©ntesis justo despuÃ©s
+            # ver si hay lista de columnas entre paréntesis justo después
             after = stmt[ins_pos + m.end():]
             col_m = re.match(r'\s*\(\s*([^)]+)\)', after)
             if col_m:
@@ -357,8 +398,8 @@ def parse_insert_target(stmt: str):
     # si viene 'table' como palabra (impala a veces)
     if rest.startswith('table '):
         rest = rest[len('table '):].lstrip()
-    # ahora tomar nombre de tabla (schema.table)
-    m = re.match(r'([a-z0-9_]+\.[a-z0-9_]+)', rest)
+    # ahora tomar nombre de tabla (schema.table o simple)
+    m = re.match(r'([a-z0-9_]+(?:\.[a-z0-9_]+)?)', rest)
     if not m:
         return None, None
     tabla = m.group(1)
@@ -375,7 +416,8 @@ def parse_insert_target(stmt: str):
             if ch == '(':
                 depth += 1
                 if depth == 1:
-                    j += 1; continue
+                    j += 1
+                    continue
             if ch == ')':
                 depth -= 1
                 if depth == 0:
@@ -405,7 +447,7 @@ def parse_create_target(stmt: str):
     # soportar 'if not exists'
     if rest.startswith('if not exists'):
         rest = rest[len('if not exists'):].lstrip()
-    m = re.match(r'([a-z0-9_]+\.[a-z0-9_]+)', rest)
+    m = re.match(r'([a-z0-9_]+(?:\.[a-z0-9_]+)?)', rest)
     if not m:
         return None, None, False
     tabla = m.group(1)
@@ -435,6 +477,35 @@ def parse_create_target(stmt: str):
     select_pos = find_top_level_keyword(stmt, 'select', tpos)
     is_ctas = (as_pos != -1 and select_pos != -1 and as_pos < select_pos)
     return tabla, cols, is_ctas
+
+def parse_create_like(stmt: str):
+    """
+    Detecta CREATE TABLE ... LIKE otra_tabla
+    Retorna (tabla_destino, tabla_origen) o (None, None) si no matchea.
+    """
+    cr_pos = find_top_level_keyword(stmt, 'create', 0)
+    if cr_pos == -1:
+        return None, None
+    tpos = find_top_level_keyword(stmt, 'table', cr_pos)
+    if tpos == -1:
+        return None, None
+    rest = stmt[tpos + len('table'):].lstrip()
+    if rest.startswith('if not exists'):
+        rest = rest[len('if not exists'):].lstrip()
+    m_dest = re.match(r'([a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+)', rest)
+    if not m_dest:
+        return None, None
+    dest = m_dest.group(1)
+    after = rest[m_dest.end():].lstrip()
+    like_pos = find_top_level_keyword(after, 'like', 0)
+    if like_pos == -1:
+        return None, None
+    like_rest = after[like_pos + len('like'):].lstrip()
+    m_src = re.match(r'([a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+)', like_rest)
+    if not m_src:
+        return None, None
+    src = m_src.group(1)
+    return dest, src
 
 # -------------------------
 # Parse de items SELECT -> extraer origen de columna y alias
@@ -512,7 +583,22 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
     stmt = stmt.strip()
     cte_map = cte_map or {}
     results = []
-    # primero detectar si es create table ... as select (ctas)
+    # primero detectar si es create table ... like
+    dest_like, src_like = parse_create_like(stmt)
+    if dest_like and src_like:
+        rec = {
+            'id': str(uuid.uuid4()),
+            'consulta': stmt,
+            'tabla_origen': src_like,
+            'tabla_destino': dest_like,
+            'campo_origen': None,
+            'campo_destino': None,
+            'transformacion_aplicada': None,
+            'recomendaciones': 'create table like: relacion a nivel de tablas'
+        }
+        return [rec]
+
+    # luego detectar si es create table ... as select (ctas)
     tabla_create, cols_create, is_ctas = parse_create_target(stmt)
     if is_ctas and tabla_create:
         # CTAS: tabla destino = tabla_create
@@ -520,7 +606,11 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         target_cols = cols_create  # puede ser None
         select_items = extract_select_items(stmt)
         from_clause = extract_from_clause(stmt)
-        src_tables = get_src_tables_with_ctes(from_clause, cte_map)
+        # combinar CTEs locales (dentro del CTAS) con el mapa heredado
+        cte_local = parse_ctes(stmt)
+        cte_merged = dict(cte_map)
+        cte_merged.update(cte_local)
+        src_tables = get_src_tables_with_ctes(from_clause, cte_merged)
         # si select_items contiene alguna star o no se especifican columnas destino -> relaciÃ³n tabla->tabla
         has_star = any(('*' in it) for it in select_items)
         if has_star or target_cols is None and (len(select_items) == 0 or any(item.strip() == '' for item in select_items)):
@@ -536,6 +626,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': None,
                     'recomendaciones': 'relacion a nivel de tablas (ctas sin lista de campos o uso de *) - verificar esquema en metastore si necesita mapping columna a columna'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             # si no hay src_tables detectadas, crear un registro general
             if not src_tables:
@@ -549,6 +640,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': None,
                     'recomendaciones': 'relacion a nivel de tablas (ctas sin lista de campos) - no se detectaron tablas origen'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
         else:
             # mapeo columna a columna (intentar inferir)
@@ -644,6 +736,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': None,
                     'recomendaciones': 'relacion a nivel de tablas por uso de * en el select; si necesita mapping columna a columna, especificar columnas en el insert o consultar metastore'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             if not src_tables:
                 rec = {
@@ -656,6 +749,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': None,
                     'recomendaciones': 'relacion a nivel de tablas por uso de *; no se detectaron tablas origen'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             return results
         # No hay stars -> intentamos mapear columnas
@@ -677,6 +771,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': transform,
                     'recomendaciones': 'mapping por posicion entre select y lista de columnas destino'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
         else:
             # no se especifica lista destino, inferimos destino por alias/nombre
@@ -694,6 +789,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'transformacion_aplicada': transform,
                     'recomendaciones': 'mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad'
                 }
+                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
         return results
 
@@ -703,6 +799,8 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
     # heurÃ­stica: si comienza con with, extraemos CTEs y procesamos la sentencia principal recursivamente
     if stmt.strip().startswith('with '):
         cte_map_local = parse_ctes(stmt)
+        cte_combined = dict(cte_map)
+        cte_combined.update(cte_map_local)
         # extraer la parte principal buscando la primera palabra top-level que sea 'insert' o 'create' o 'select' despuÃ©s del bloque with
         # encontraremos la posiciÃ³n de la palabra 'with' y luego buscaremos 'insert' o 'create' u 'select' top-level posterior
         # para simplificar, buscamos 'insert' y 'create' top-level y tomamos la que ocurra primero
@@ -715,7 +813,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
             main_pos = min(candidates)
             main_stmt = stmt[main_pos:]
             # recursivamente parsear la main statement
-            return lineage_from_statement(main_stmt, cte_map_local)
+            return lineage_from_statement(main_stmt, cte_combined)
         else:
             # no se pudo identificar main statement; devolver vacÃ­o o un registro general
             rec = {
@@ -821,6 +919,78 @@ if __name__ == "__main__":
            select id, valor from sbani.origen
         )
         insert into sbani.destino select id, valor from cte;
+        """,
+        # create like (estructura) y luego insert con filtro
+        """
+        CREATE TABLE IF NOT EXISTS dwh.ventas_estructura LIKE raw.ventas;
+
+        INSERT INTO dwh.ventas_estructura
+        SELECT * FROM raw.ventas
+        WHERE fecha_venta >= '2025-01-01';
+        """,
+        # CTAS con WITH y múltiples CTEs y joins + agregaciones
+        """
+        CREATE TABLE IF NOT EXISTS dwh.ventas_resumen
+        STORED AS PARQUET
+        AS
+        WITH ventas_filtradas AS (
+            SELECT 
+                v.cliente_id,
+                v.producto_id,
+                v.cantidad,
+                v.precio,
+                v.fecha_venta
+            FROM raw.ventas v
+            WHERE v.fecha_venta >= '2025-01-01'
+        ),
+        clientes_activos AS (
+            SELECT
+                c.cliente_id,
+                c.nombre,
+                c.segmento
+            FROM mkt.clientes c
+            WHERE c.estado = 'activo'
+        )
+        SELECT
+            ca.cliente_id,
+            ca.nombre,
+            ca.segmento,
+            SUM(vf.cantidad * vf.precio) AS total_comprado,
+            COUNT(DISTINCT vf.producto_id) AS productos_distintos
+        FROM ventas_filtradas vf
+        JOIN clientes_activos ca
+            ON vf.cliente_id = ca.cliente_id
+        GROUP BY ca.cliente_id, ca.nombre, ca.segmento;
+        """,
+        # CTAS similar sin esquema en nombres
+        """
+        CREATE TABLE IF NOT EXISTS ventas_resumen
+        STORED AS PARQUET
+        AS
+        WITH ventas_filtradas AS (
+            SELECT 
+                cliente_id,
+                producto_id,
+                cantidad,
+                precio,
+                fecha_venta
+            FROM ventas
+            WHERE fecha_venta >= '2025-01-01'
+        ),
+        totales_por_cliente AS (
+            SELECT
+                cliente_id,
+                SUM(cantidad * precio) AS total_comprado,
+                COUNT(DISTINCT producto_id) AS productos_distintos
+            FROM ventas_filtradas
+            GROUP BY cliente_id
+        )
+        SELECT
+            c.cliente_id,
+            c.total_comprado,
+            c.productos_distintos,
+            CURRENT_TIMESTAMP() AS fecha_proceso
+        FROM totales_por_cliente c;
         """
     ]
 
