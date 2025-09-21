@@ -605,6 +605,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         target_table = tabla_create
         target_cols = cols_create  # puede ser None
         select_items = extract_select_items(stmt)
+        parsed_items = [parse_select_item(it) for it in select_items]
         from_clause = extract_from_clause(stmt)
         # combinar CTEs locales (dentro del CTAS) con el mapa heredado
         cte_local = parse_ctes(stmt)
@@ -612,7 +613,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         cte_merged.update(cte_local)
         src_tables = get_src_tables_with_ctes(from_clause, cte_merged)
         # si select_items contiene alguna star o no se especifican columnas destino -> relaciÃ³n tabla->tabla
-        has_star = any(('*' in it) for it in select_items)
+        has_star = any(item['is_star'] for item in parsed_items)
         if has_star or target_cols is None and (len(select_items) == 0 or any(item.strip() == '' for item in select_items)):
             # relaciÃ³n a nivel tabla: por las reglas del usuario, si se crea tabla en base al esquema de otra y no se indican campos -> tabla->tabla
             for (src_tab, alias) in src_tables:
@@ -644,10 +645,9 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                 results.append(rec)
         else:
             # mapeo columna a columna (intentar inferir)
-            items = [parse_select_item(it) for it in select_items]
             # si target_cols estÃ¡ definido, mapear por posiciÃ³n
             if target_cols:
-                for idx, item in enumerate(items):
+                for idx, item in enumerate(parsed_items):
                     dest_col = target_cols[idx] if idx < len(target_cols) else None
                     origin = None
                     if item['origin_cols']:
@@ -681,8 +681,7 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                             rec['tabla_origen'] = _u[0]
                     results.append(rec)
             else:
-                # no hay columnas destino; usamos alias o nombre inferido en select
-                for item in items:
+                for item in parsed_items:
                     dest_col = item['alias'] if item['alias'] else (item['origin_cols'][-1] if item['origin_cols'] else None)
                     origin = None
                     if item['origin_cols']:
