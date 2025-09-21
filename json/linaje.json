@@ -1,0 +1,82 @@
+[
+  {
+    "id": "96515d10-8380-495c-bd7b-1e2f5beddbc1",
+    "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
+    "tabla_origen": "sbani.source_table",
+    "tabla_destino": "sbani.dest_table",
+    "campo_origen": "id",
+    "campo_destino": "id",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
+  },
+  {
+    "id": "3c12ed41-92c2-4d23-a31d-7045fbcbd411",
+    "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
+    "tabla_origen": "sbani.source_table",
+    "tabla_destino": "sbani.dest_table",
+    "campo_origen": "full_name",
+    "campo_destino": "nombre",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
+  },
+  {
+    "id": "f7a260d0-ce89-4279-a888-6dca43084640",
+    "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
+    "tabla_origen": "sbani.source_table",
+    "tabla_destino": "sbani.dest_table",
+    "campo_origen": "phone",
+    "campo_destino": "telefono",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
+  },
+  {
+    "id": "30020050-c610-4583-ab65-6c330b2b3956",
+    "consulta": "insert into sbani.dest_all select * from sbani.source_all",
+    "tabla_origen": "sbani.source_all",
+    "tabla_destino": "sbani.dest_all",
+    "campo_origen": null,
+    "campo_destino": null,
+    "transformacion_aplicada": null,
+    "recomendaciones": "relacion a nivel de tablas por uso de * en el select; si necesita mapping columna a columna, especificar columnas en el insert o consultar metastore"
+  },
+  {
+    "id": "8d00f57e-0209-4552-950a-ae954b1de3a1",
+    "consulta": "create table sbani.ctas_table as select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id",
+    "tabla_origen": "sbani.tabla_a",
+    "tabla_destino": "sbani.ctas_table",
+    "campo_origen": "col1",
+    "campo_destino": "col1",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+  },
+  {
+    "id": "05d36479-2fc2-4a5f-aa4b-1117efa143da",
+    "consulta": "create table sbani.ctas_table as select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id",
+    "tabla_origen": "sbani.tabla_b",
+    "tabla_destino": "sbani.ctas_table",
+    "campo_origen": "col2",
+    "campo_destino": "col2",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+  },
+  {
+    "id": "f7a3f68a-204b-4d5c-91e8-93b8f8b1c3df",
+    "consulta": "with cte as ( select id, valor from sbani.origen ) insert into sbani.destino select id, valor from cte",
+    "tabla_origen": null,
+    "tabla_destino": "sbani.destino",
+    "campo_origen": "id",
+    "campo_destino": "id",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad"
+  },
+  {
+    "id": "00b46e2d-47fd-4036-87e7-f0fc6911a2b9",
+    "consulta": "with cte as ( select id, valor from sbani.origen ) insert into sbani.destino select id, valor from cte",
+    "tabla_origen": null,
+    "tabla_destino": "sbani.destino",
+    "campo_origen": "valor",
+    "campo_destino": "valor",
+    "transformacion_aplicada": "copy",
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad"
+  }
+]
