@@ -298,92 +298,6 @@ def _fallback_tabla_origen(rec: dict, src_tables: list) -> None:
         # fallback silencioso para no romper flujo
         pass
 
-
-def _unique_origin_tokens(origin_cols: list) -> list:
-    tokens = []
-    for tok in origin_cols:
-        if not tok:
-            continue
-        tok = tok.strip()
-        if not tok or tok == '*':
-            continue
-        if tok not in tokens:
-            tokens.append(tok)
-    return tokens
-
-
-def _is_function_without_fields(item: dict) -> bool:
-    if item.get('origin_cols'):
-        return False
-    expr = (item.get('expr') or '').strip()
-    raw = (item.get('raw') or '').strip()
-    candidate = expr or raw
-    if not candidate:
-        return False
-    candidate_lower = candidate.lower()
-    if candidate_lower.startswith('case '):
-        return False
-    if '(' in candidate_lower and ')' in candidate_lower:
-        return True
-    if candidate_lower in {'current_timestamp', 'current_date', 'current_time', 'now'}:
-        return True
-    return False
-
-
-def _build_records_for_item(item: dict, dest_col: str, target_table: str, src_tables: list,
-                            stmt: str, recomendacion: str) -> list:
-    records = []
-    if item.get('is_star'):
-        return records
-    origins = _unique_origin_tokens(item.get('origin_cols', []))
-    expr = (item.get('expr') or '').strip()
-    if not expr:
-        expr = (item.get('raw') or '').strip()
-    is_copy = len(origins) == 1 and expr and expr == origins[0]
-    transform = 'copy' if is_copy else (expr or None)
-
-    if origins:
-        for tok in origins:
-            tabla = resolve_table_from_token(tok, src_tables)
-            campo = tok.split('.')[-1] if '.' in tok else tok
-            rec = {
-                'id': str(uuid.uuid4()),
-                'consulta': stmt,
-                'tabla_origen': tabla,
-                'tabla_destino': target_table,
-                'campo_origen': campo,
-                'campo_destino': dest_col,
-                'transformacion_aplicada': transform,
-                'recomendaciones': recomendacion
-            }
-            records.append(rec)
-    elif _is_function_without_fields(item):
-        expr_value = expr or item.get('raw') or 'funcion'
-        rec = {
-            'id': str(uuid.uuid4()),
-            'consulta': stmt,
-            'tabla_origen': 'funciones',
-            'tabla_destino': target_table,
-            'campo_origen': expr_value,
-            'campo_destino': dest_col,
-            'transformacion_aplicada': expr_value,
-            'recomendaciones': recomendacion
-        }
-        records.append(rec)
-    else:
-        rec = {
-            'id': str(uuid.uuid4()),
-            'consulta': stmt,
-            'tabla_origen': None,
-            'tabla_destino': target_table,
-            'campo_origen': None,
-            'campo_destino': dest_col,
-            'transformacion_aplicada': transform,
-            'recomendaciones': recomendacion
-        }
-        records.append(rec)
-    return records
-
 def parse_ctes(stmt: str) -> dict:
     """
     Extrae definiciones de CTE a partir de una sentencia que comienza con WITH.
@@ -646,7 +560,7 @@ def parse_select_item(item: str) -> dict:
     # buscar todos los identificadores separados por punto
     col_refs = re.findall(r'([a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+)', it)
     # col_refs incluye tokens y palabras; no todos son columnas; filtramos palabras reservadas y functions comunes
-    keywords = set(['case','when','then','else','end','count','sum','min','max','avg','cast','over','partition','order','by','desc','asc','distinct','row_number','and','or','coalesce','lag','lead','dense_rank','rank','current_timestamp','current_date','current_time','now'])
+    keywords = set(['case','when','then','else','end','count','sum','min','max','avg','cast'])
     cols = []
     for token in col_refs:
         if token in keywords:
@@ -731,45 +645,68 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                 results.append(rec)
         else:
             # mapeo columna a columna (intentar inferir)
+            # si target_cols estÃ¡ definido, mapear por posiciÃ³n
             if target_cols:
                 for idx, item in enumerate(parsed_items):
                     dest_col = target_cols[idx] if idx < len(target_cols) else None
-                    if dest_col is None:
-                        if item.get('alias'):
-                            dest_col = item['alias']
-                        elif item.get('origin_cols'):
-                            tmp = item['origin_cols'][-1]
-                            dest_col = tmp.split('.')[-1] if '.' in tmp else tmp
-                    records = _build_records_for_item(
-                        item,
-                        dest_col,
-                        target_table,
-                        src_tables,
-                        stmt,
-                        'verificar expresiones y tipos; mapping inferido por posicion en ctas con columnas destino'
-                    )
-                    for rec in records:
-                        if rec['tabla_origen'] != 'funciones':
-                            _fallback_tabla_origen(rec, src_tables)
-                        results.append(rec)
+                    origin = None
+                    if item['origin_cols']:
+                        origin = item['origin_cols'][-1]  # heurÃ­stica: ultima referencia
+                    transform = None
+                    if item['is_star']:
+                        origin = '*'
+                        transform = None
+                    else:
+                        # si expr es exactamente origin (ej table.col) => copy
+                        if len(item['origin_cols']) == 1 and item['expr'].strip() in item['origin_cols']:
+                            transform = 'copy'
+                        else:
+                            transform = item['expr']
+                    rec = {
+                        'id': str(uuid.uuid4()),
+                        'consulta': stmt,
+                        'tabla_origen': resolve_table_from_token(origin if origin else (item['origin_cols'][-1] if item['origin_cols'] else None), src_tables),
+                        'tabla_destino': target_table,
+                        'campo_origen': (origin if (not origin or origin=='*') else origin.split('.')[-1]),
+                        'campo_destino': (dest_col if (not dest_col or dest_col=='*') else dest_col.split('.')[-1]),
+                        'transformacion_aplicada': transform,
+                        'recomendaciones': 'verificar expresiones y tipos; mapping inferido por posicion en ctas con columnas destino'
+                    }
+                    if rec['tabla_origen'] is None and src_tables:
+                        _u = []
+                        for (_f,_a) in src_tables:
+                            if _f not in _u:
+                                _u.append(_f)
+                        if len(_u) == 1:
+                            rec['tabla_origen'] = _u[0]
+                    results.append(rec)
             else:
                 for item in parsed_items:
                     dest_col = item['alias'] if item['alias'] else (item['origin_cols'][-1] if item['origin_cols'] else None)
-                    if dest_col and '.' in dest_col:
-                        dest_col = dest_col.split('.')[-1]
-                    records = _build_records_for_item(
-                        item,
-                        dest_col,
-                        target_table,
-                        src_tables,
-                        stmt,
-                        'mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision'
-                    )
-                    for rec in records:
-                        if rec['tabla_origen'] != 'funciones':
-                            _fallback_tabla_origen(rec, src_tables)
-                        results.append(rec)
-            return results
+                    origin = None
+                    if item['origin_cols']:
+                        origin = item['origin_cols'][-1]
+                    transform = None
+                    if item['is_star']:
+                        origin = '*'
+                        transform = None
+                    else:
+                        if len(item['origin_cols']) == 1 and item['expr'].strip() in item['origin_cols']:
+                            transform = 'copy'
+                        else:
+                            transform = item['expr']
+                    rec = {
+                        'id': str(uuid.uuid4()),
+                        'consulta': stmt,
+                        'tabla_origen': resolve_table_from_token(origin if origin else (item['origin_cols'][-1] if item['origin_cols'] else None), src_tables),
+                        'tabla_destino': target_table,
+                        'campo_origen': (origin if (not origin or origin=='*') else origin.split('.')[-1]),
+                        'campo_destino': (dest_col if (not dest_col or dest_col=='*') else dest_col.split('.')[-1]),
+                        'transformacion_aplicada': transform,
+                        'recomendaciones': 'mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiÃ³n'
+                    }
+                    results.append(rec)
+        return results
 
     # -------------------------
     # Caso INSERT ... SELECT
@@ -782,9 +719,9 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         from_clause = extract_from_clause(stmt)
         src_tables = get_src_tables_with_ctes(from_clause, cte_map)
         # parse items
-        parsed_items = [parse_select_item(it) for it in select_items]
+        items = [parse_select_item(it) for it in select_items]
         # si existe algÃºn item is_star => relaciÃ³n tabla->tabla
-        any_star = any(it['is_star'] for it in parsed_items)
+        any_star = any(it['is_star'] for it in items)
         if any_star:
             # cuando hay '*' en el select sin conocer campos, mantÃ©n relaciÃ³n a nivel de tablas
             for (src_tab, alias) in src_tables:
@@ -816,43 +753,43 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
             return results
         # No hay stars -> intentamos mapear columnas
         if target_cols:
-            for idx, item in enumerate(parsed_items):
+            # mapear por posiciÃ³n
+            for idx, item in enumerate(items):
                 dest_col = target_cols[idx] if idx < len(target_cols) else None
-                if dest_col is None:
-                    if item.get("alias"):
-                        dest_col = item["alias"]
-                    elif item.get("origin_cols"):
-                        tmp = item["origin_cols"][-1]
-                        dest_col = tmp.split(".")[-1] if "." in tmp else tmp
-                records = _build_records_for_item(
-                    item,
-                    dest_col,
-                    target_table,
-                    src_tables,
-                    stmt,
-                    'mapping por posicion entre select y lista de columnas destino'
-                )
-                for rec in records:
-                    if rec["tabla_origen"] != 'funciones':
-                        _fallback_tabla_origen(rec, src_tables)
-                    results.append(rec)
+                origin = None
+                if item['origin_cols']:
+                    origin = item['origin_cols'][-1]  # heurÃ­stica
+                transform = 'copy' if len(item['origin_cols'])==1 and item['expr'].strip() in item['origin_cols'] else item['expr']
+                rec = {
+                    'id': str(uuid.uuid4()),
+                    'consulta': stmt,
+                    'tabla_origen': resolve_table_from_token(origin if origin else (item['origin_cols'][-1] if item['origin_cols'] else None), src_tables),
+                    'tabla_destino': target_table,
+                    'campo_origen': (origin if (not origin or origin=='*') else origin.split('.')[-1]),
+                    'campo_destino': (dest_col if (not dest_col or dest_col=='*') else dest_col.split('.')[-1]),
+                    'transformacion_aplicada': transform,
+                    'recomendaciones': 'mapping por posicion entre select y lista de columnas destino'
+                }
+                _fallback_tabla_origen(rec, src_tables)
+                results.append(rec)
         else:
-            for item in parsed_items:
-                dest_col = item["alias"] if item["alias"] else (item["origin_cols"][-1] if item["origin_cols"] else None)
-                if dest_col and '.' in dest_col:
-                    dest_col = dest_col.split(".")[-1]
-                records = _build_records_for_item(
-                    item,
-                    dest_col,
-                    target_table,
-                    src_tables,
-                    stmt,
-                    'mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad'
-                )
-                for rec in records:
-                    if rec["tabla_origen"] != 'funciones':
-                        _fallback_tabla_origen(rec, src_tables)
-                    results.append(rec)
+            # no se especifica lista destino, inferimos destino por alias/nombre
+            for item in items:
+                dest_col = item['alias'] if item['alias'] else (item['origin_cols'][-1] if item['origin_cols'] else None)
+                origin = item['origin_cols'][-1] if item['origin_cols'] else None
+                transform = 'copy' if len(item['origin_cols'])==1 and item['expr'].strip() in item['origin_cols'] else item['expr']
+                rec = {
+                    'id': str(uuid.uuid4()),
+                    'consulta': stmt,
+                    'tabla_origen': resolve_table_from_token(origin if origin else (item['origin_cols'][-1] if item['origin_cols'] else None), src_tables),
+                    'tabla_destino': target_table,
+                    'campo_origen': (origin if (not origin or origin=='*') else origin.split('.')[-1]),
+                    'campo_destino': (dest_col if (not dest_col or dest_col=='*') else dest_col.split('.')[-1]),
+                    'transformacion_aplicada': transform,
+                    'recomendaciones': 'mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad'
+                }
+                _fallback_tabla_origen(rec, src_tables)
+                results.append(rec)
         return results
 
     # -------------------------

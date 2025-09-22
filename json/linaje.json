@@ -1,6 +1,6 @@
 [
   {
-    "id": "ee58412f-d2a3-4ac7-8dd2-2b65ad4a90ae",
+    "id": "c7b4c677-86ee-4ba0-9b5f-6536cb6bc64b",
     "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
     "tabla_origen": "sbani.source_table",
     "tabla_destino": "sbani.dest_table",
@@ -10,7 +10,7 @@
     "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
   },
   {
-    "id": "eea2d993-0245-4d6a-90f0-b41bb551898a",
+    "id": "ce5db76d-ec3c-45d4-a941-1f321721d505",
     "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
     "tabla_origen": "sbani.source_table",
     "tabla_destino": "sbani.dest_table",
@@ -20,7 +20,7 @@
     "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
   },
   {
-    "id": "26ade5bf-e37b-4c1e-b699-8d9ecb3845bf",
+    "id": "fd445e57-79ab-4f6f-9534-bf09e984ec33",
     "consulta": "insert into sbani.dest_table (id, nombre, telefono) select t.id, t.full_name as nombre, t.phone from sbani.source_table t",
     "tabla_origen": "sbani.source_table",
     "tabla_destino": "sbani.dest_table",
@@ -30,7 +30,7 @@
     "recomendaciones": "mapping por posicion entre select y lista de columnas destino"
   },
   {
-    "id": "bc3ffc08-aab0-4ef4-8000-55db8b5fe530",
+    "id": "163dd4ee-c0c2-435f-9b0c-a005d97e4f57",
     "consulta": "insert into sbani.dest_all select * from sbani.source_all",
     "tabla_origen": "sbani.source_all",
     "tabla_destino": "sbani.dest_all",
@@ -40,27 +40,27 @@
     "recomendaciones": "relacion a nivel de tablas por uso de * en el select; si necesita mapping columna a columna, especificar columnas en el insert o consultar metastore"
   },
   {
-    "id": "e6991fe0-9df3-4930-8894-c6df44b31842",
+    "id": "d2417ee0-4b30-4c35-aeac-132ab89a8d3d",
     "consulta": "create table sbani.ctas_table as select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id",
     "tabla_origen": "sbani.tabla_a",
     "tabla_destino": "sbani.ctas_table",
     "campo_origen": "col1",
     "campo_destino": "col1",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "fb09f63c-da15-429e-bc5d-53137b9113d3",
+    "id": "73ca7b06-fe2b-4594-9ce2-0d8d2da38075",
     "consulta": "create table sbani.ctas_table as select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id",
     "tabla_origen": "sbani.tabla_b",
     "tabla_destino": "sbani.ctas_table",
     "campo_origen": "col2",
     "campo_destino": "col2",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "69a2fe92-7904-4a9d-9a7f-f4c458141bf7",
+    "id": "56c40b1c-5736-4e23-bdda-48214dd4f3fa",
     "consulta": "with cte as ( select id, valor from sbani.origen ) insert into sbani.destino select id, valor from cte",
     "tabla_origen": "cte",
     "tabla_destino": "sbani.destino",
@@ -70,7 +70,7 @@
     "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad"
   },
   {
-    "id": "6fef6286-7b20-4ecf-812e-8d0e7c9181ed",
+    "id": "9886048a-85cb-4902-a70f-42c2249f5582",
     "consulta": "with cte as ( select id, valor from sbani.origen ) insert into sbani.destino select id, valor from cte",
     "tabla_origen": "cte",
     "tabla_destino": "sbani.destino",
@@ -80,7 +80,7 @@
     "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en el insert para mayor claridad"
   },
   {
-    "id": "c6d6611e-5210-4c97-8ad6-ac703c915d81",
+    "id": "618cf0b2-f081-43f7-9049-6e352307182c",
     "consulta": "create table if not exists dwh.ventas_estructura like raw.ventas",
     "tabla_origen": "raw.ventas",
     "tabla_destino": "dwh.ventas_estructura",
@@ -90,7 +90,7 @@
     "recomendaciones": "create table like: relacion a nivel de tablas"
   },
   {
-    "id": "bf297233-2090-49f9-a014-030d76aee68a",
+    "id": "773e3756-1dd1-412d-b208-f87b15e5e1a9",
     "consulta": "insert into dwh.ventas_estructura select * from raw.ventas where fecha_venta >= '2025-01-01'",
     "tabla_origen": "raw.ventas",
     "tabla_destino": "dwh.ventas_estructura",
@@ -100,93 +100,103 @@
     "recomendaciones": "relacion a nivel de tablas por uso de * en el select; si necesita mapping columna a columna, especificar columnas en el insert o consultar metastore"
   },
   {
-    "id": "120497b8-6536-4acd-a6f3-b26ac9c0d1e2",
+    "id": "0469d059-cb84-44e1-9051-7b218c61a409",
     "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
     "tabla_origen": "mkt.clientes",
     "tabla_destino": "dwh.ventas_resumen",
     "campo_origen": "cliente_id",
     "campo_destino": "cliente_id",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "08fe3d2d-24ab-4476-962c-710f632f102f",
+    "id": "7bb00061-05bd-49bb-8c0b-ebc7ca9f1c34",
     "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
     "tabla_origen": "mkt.clientes",
     "tabla_destino": "dwh.ventas_resumen",
     "campo_origen": "nombre",
     "campo_destino": "nombre",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "2d8eb4a9-c447-41e5-ba79-d5b4be502a12",
+    "id": "2f6a5469-1548-4fae-8a8e-68da3694f38f",
     "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
     "tabla_origen": "mkt.clientes",
     "tabla_destino": "dwh.ventas_resumen",
     "campo_origen": "segmento",
     "campo_destino": "segmento",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "fe9e257b-da05-4622-a7e0-4ab318dd3dbb",
+    "id": "90c1af89-532e-4616-89b6-93aa12b5bb1f",
+    "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
+    "tabla_origen": "raw.ventas",
+    "tabla_destino": "dwh.ventas_resumen",
+    "campo_origen": "cantidad",
+    "campo_destino": "total_comprado",
+    "transformacion_aplicada": "sum(vf.cantidad * vf.precio)",
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
+  },
+  {
+    "id": "b43df18e-1291-4421-9090-8afd372876e5",
     "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
     "tabla_origen": "raw.ventas",
     "tabla_destino": "dwh.ventas_resumen",
     "campo_origen": "precio",
     "campo_destino": "total_comprado",
     "transformacion_aplicada": "sum(vf.cantidad * vf.precio)",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "4f1633dd-2e0e-451e-a6de-cd8dcb845a8a",
+    "id": "edf5d85e-2c5c-4fe2-92b8-56ea8ab6a6a8",
     "consulta": "create table if not exists dwh.ventas_resumen stored as parquet as with ventas_filtradas as ( select v.cliente_id, v.producto_id, v.cantidad, v.precio, v.fecha_venta from raw.ventas v where v.fecha_venta >= '2025-01-01' ), clientes_activos as ( select c.cliente_id, c.nombre, c.segmento from mkt.clientes c where c.estado = 'activo' ) select ca.cliente_id, ca.nombre, ca.segmento, sum(vf.cantidad * vf.precio) as total_comprado, count(distinct vf.producto_id) as productos_distintos from ventas_filtradas vf join clientes_activos ca on vf.cliente_id = ca.cliente_id group by ca.cliente_id, ca.nombre, ca.segmento",
     "tabla_origen": "raw.ventas",
     "tabla_destino": "dwh.ventas_resumen",
     "campo_origen": "producto_id",
     "campo_destino": "productos_distintos",
     "transformacion_aplicada": "count(distinct vf.producto_id)",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "6f4cdc30-c1a4-449e-81d6-d1039fd809c7",
+    "id": "e662d9a8-2a94-45b9-8225-16e8bf3e2c6d",
     "consulta": "create table if not exists ventas_resumen stored as parquet as with ventas_filtradas as ( select cliente_id, producto_id, cantidad, precio, fecha_venta from ventas where fecha_venta >= '2025-01-01' ), totales_por_cliente as ( select cliente_id, sum(cantidad * precio) as total_comprado, count(distinct producto_id) as productos_distintos from ventas_filtradas group by cliente_id ) select c.cliente_id, c.total_comprado, c.productos_distintos, current_timestamp() as fecha_proceso from totales_por_cliente c",
     "tabla_origen": "ventas",
     "tabla_destino": "ventas_resumen",
     "campo_origen": "cliente_id",
     "campo_destino": "cliente_id",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "8d910433-da9b-45ff-8606-036a35f2d587",
+    "id": "3fc45a8d-212a-41c6-b967-bfda488dbb4a",
     "consulta": "create table if not exists ventas_resumen stored as parquet as with ventas_filtradas as ( select cliente_id, producto_id, cantidad, precio, fecha_venta from ventas where fecha_venta >= '2025-01-01' ), totales_por_cliente as ( select cliente_id, sum(cantidad * precio) as total_comprado, count(distinct producto_id) as productos_distintos from ventas_filtradas group by cliente_id ) select c.cliente_id, c.total_comprado, c.productos_distintos, current_timestamp() as fecha_proceso from totales_por_cliente c",
     "tabla_origen": "ventas",
     "tabla_destino": "ventas_resumen",
     "campo_origen": "total_comprado",
     "campo_destino": "total_comprado",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "dfe36515-a0f3-41cb-bf5e-e742db3ae9fd",
+    "id": "c929501a-911c-46fd-b043-b041c55734df",
     "consulta": "create table if not exists ventas_resumen stored as parquet as with ventas_filtradas as ( select cliente_id, producto_id, cantidad, precio, fecha_venta from ventas where fecha_venta >= '2025-01-01' ), totales_por_cliente as ( select cliente_id, sum(cantidad * precio) as total_comprado, count(distinct producto_id) as productos_distintos from ventas_filtradas group by cliente_id ) select c.cliente_id, c.total_comprado, c.productos_distintos, current_timestamp() as fecha_proceso from totales_por_cliente c",
     "tabla_origen": "ventas",
     "tabla_destino": "ventas_resumen",
     "campo_origen": "productos_distintos",
     "campo_destino": "productos_distintos",
     "transformacion_aplicada": "copy",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   },
   {
-    "id": "bd396aba-5ec8-4f11-aec3-38e89dc0665d",
+    "id": "eb255d9a-f150-44f2-847c-07149854d3e4",
     "consulta": "create table if not exists ventas_resumen stored as parquet as with ventas_filtradas as ( select cliente_id, producto_id, cantidad, precio, fecha_venta from ventas where fecha_venta >= '2025-01-01' ), totales_por_cliente as ( select cliente_id, sum(cantidad * precio) as total_comprado, count(distinct producto_id) as productos_distintos from ventas_filtradas group by cliente_id ) select c.cliente_id, c.total_comprado, c.productos_distintos, current_timestamp() as fecha_proceso from totales_por_cliente c",
-    "tabla_origen": "ventas",
+    "tabla_origen": "funciones",
     "tabla_destino": "ventas_resumen",
-    "campo_origen": "current_timestamp",
+    "campo_origen": "current_timestamp()",
     "campo_destino": "fecha_proceso",
     "transformacion_aplicada": "current_timestamp()",
-    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precisiã³n"
+    "recomendaciones": "mapping inferido sin lista destino; se recomienda especificar columnas en create table (...) as select (...) para mayor precision"
   }
 ]
