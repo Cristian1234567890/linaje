@@ -1,0 +1,173 @@
+﻿:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Roboto, sans-serif;
+  background: #f2f4f7;
+  color: #1f2933;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+header {
+  background: linear-gradient(120deg, #0ea5e9, #6366f1);
+  color: #fff;
+  padding: 1.5rem 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.9rem;
+}
+
+header p {
+  margin: 0 0 1rem;
+  max-width: 60ch;
+}
+
+.controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+button, select {
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+button {
+  background: #ffffff;
+  color: #1f2933;
+  font-weight: 600;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.2);
+}
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 0;
+  min-height: 0;
+}
+
+#cy {
+  width: 100%;
+  height: calc(100vh - 200px);
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+}
+
+aside#details {
+  padding: 1.5rem;
+  background: #fafbff;
+  border-left: 1px solid #e0e7ff;
+  overflow-y: auto;
+}
+
+aside h2 {
+  margin-top: 0;
+  font-size: 1.3rem;
+}
+
+#details-content p {
+  margin-top: 0;
+  line-height: 1.4;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.95rem;
+}
+
+.details-grid strong {
+  font-weight: 600;
+  color: #334155;
+}
+
+footer {
+  padding: 0.75rem 1.5rem;
+  background: #eef2ff;
+  text-align: right;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+/* Cytoscape styles */
+.cy-table {
+  background-color: #22c55e;
+  border: 2px solid #15803d;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 4px;
+  text-transform: lowercase;
+}
+
+.cy-table.funciones {
+  background-color: #ef4444;
+  border-color: #b91c1c;
+}
+
+.cy-column {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  color: #0f172a;
+  font-size: 0.78rem;
+  padding: 2px 4px;
+}
+
+.cy-column.funcion {
+  background: #fee2e2;
+  border-color: #f87171;
+  color: #7f1d1d;
+}
+
+.cy-edge {
+  line-color: #94a3b8;
+  target-arrow-color: #94a3b8;
+  target-arrow-shape: triangle;
+  curve-style: bezier;
+  width: 2px;
+}
+
+.cy-edge.funcion {
+  line-color: #dc2626;
+  target-arrow-color: #dc2626;
+  width: 3px;
+}
+
+@media (max-width: 960px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  #cy {
+    height: 60vh;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  aside#details {
+    height: auto;
+  }
+}

@@ -1,0 +1,44 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visualización de Linaje</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+  <script defer src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <script defer src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Linaje de Datos</h1>
+    <p>Visualización generada a partir de <code>json/linaje.json</code>. Los orígenes provenientes de <strong>funciones</strong> se muestran en rojo.</p>
+    <div class="controls">
+      <button id="refresh-btn">Actualizar</button>
+      <label>
+        Distribución:
+        <select id="layout-select">
+          <option value="dagre">Flujo Horizontal</option>
+          <option value="breadthfirst">Jerárquico</option>
+          <option value="cose">Orgánico</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <div id="cy"></div>
+    <aside id="details">
+      <h2>Detalles</h2>
+      <div id="details-content">
+        <p>Haz clic en cualquier columna o conexión para ver la información asociada.</p>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <small>Para servir los archivos de forma local puedes ejecutar <code>python -m http.server</code> y abrir <code>http://localhost:8000/viz/</code>.</small>
+  </footer>
+</body>
+</html>
