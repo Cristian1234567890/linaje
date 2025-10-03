@@ -14,6 +14,7 @@ import re
 import json
 import uuid
 import os
+import pandas as pd
 
 # -------------------------
 # Helpers de anÃ¡lisis lÃ©xico simples (manejan parÃ©ntesis y comillas)
@@ -1023,4 +1024,8 @@ if __name__ == "__main__":
         print(json.dumps(lin, indent=2, ensure_ascii=False))
         print("\n" + "="*60 + "\n")
     # Guardar resultado en archivo JSON
-    guardar_linaje_en_json(linajes)
+    df_linaje = pd.DataFrame(linajes)
+    print("DataFrame generado (primeras filas):")
+    
+    # print(df_linaje.head())
+    #guardar_linaje_en_json(linajes)
