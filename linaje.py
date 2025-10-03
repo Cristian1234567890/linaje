@@ -20,15 +20,15 @@ import os
 # -------------------------
 
 def normalize_sql(sql: str) -> str:
-    """Normaliza: pasa a minÃºsculas y colapsa espacios (no altera comillas internas)."""
-    # conservamos comillas pero simplificamos espacios
-    s = sql.strip()
-    # convertimos a minÃºsculas (impala no distingue mayÃºsculas para keywords)
+    """Normaliza: elimina comentarios, pasa a minúsculas y colapsa espacios."""
+    # eliminar comentarios de bloque y de línea
+    s = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.DOTALL)
+    s = re.sub(r'--.*?(?=\r?\n|$)', ' ', s)
+    # normalizar espacios y mayúsculas
+    s = s.strip()
     s = s.lower()
-    # colapsar mÃºltiples espacios, tab y saltos de lÃ­nea en un Ãºnico espacio
     s = re.sub(r'\s+', ' ', s)
     return s
-
 def top_level_split(s: str, delimiter: str=',') -> list:
     """
     Divide una cadena por delimitador pero solo en nivel superior (depth==0).
@@ -669,6 +669,32 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
     stmt = stmt.strip()
     cte_map = cte_map or {}
     results = []
+
+    # si comienza con WITH, extraer CTEs y procesar la sentencia principal
+    if stmt.startswith('with '):
+        cte_map_local = parse_ctes(stmt)
+        cte_combined = dict(cte_map)
+        cte_combined.update(cte_map_local)
+        pos_insert = find_top_level_keyword(stmt, 'insert', 0)
+        pos_create = find_top_level_keyword(stmt, 'create', 0)
+        pos_select = find_top_level_keyword(stmt, 'select', 0)
+        candidates = [p for p in [pos_insert, pos_create, pos_select] if p and p > 0]
+        if candidates:
+            main_pos = min(candidates)
+            main_stmt = stmt[main_pos:]
+            return lineage_from_statement(main_stmt, cte_combined)
+        rec = {
+            'id': str(uuid.uuid4()),
+            'consulta': stmt,
+            'tabla_origen': None,
+            'tabla_destino': None,
+            'campo_origen': None,
+            'campo_destino': None,
+            'transformacion_aplicada': None,
+            'recomendaciones': 'with detectado pero no se pudo localizar la sentencia principal (insert/create/select) - revisar manualmente'
+        }
+        return [rec]
+
     # primero detectar si es create table ... like
     dest_like, src_like = parse_create_like(stmt)
     if dest_like and src_like:
@@ -856,75 +882,6 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         return results
 
     # -------------------------
-    # Caso con WITH ... (CTE) - tratar CTEs y luego buscar insert/create
-    # -------------------------
-    # heurÃ­stica: si comienza con with, extraemos CTEs y procesamos la sentencia principal recursivamente
-    if stmt.strip().startswith('with '):
-        cte_map_local = parse_ctes(stmt)
-        cte_combined = dict(cte_map)
-        cte_combined.update(cte_map_local)
-        # extraer la parte principal buscando la primera palabra top-level que sea 'insert' o 'create' o 'select' despuÃ©s del bloque with
-        # encontraremos la posiciÃ³n de la palabra 'with' y luego buscaremos 'insert' o 'create' u 'select' top-level posterior
-        # para simplificar, buscamos 'insert' y 'create' top-level y tomamos la que ocurra primero
-        pos_insert = find_top_level_keyword(stmt, 'insert', 0)
-        pos_create = find_top_level_keyword(stmt, 'create', 0)
-        pos_select = find_top_level_keyword(stmt, 'select', 0)
-        # elegimos la mÃ­nima positiva > 0
-        candidates = [p for p in [pos_insert, pos_create, pos_select] if p and p > 0]
-        if candidates:
-            main_pos = min(candidates)
-            main_stmt = stmt[main_pos:]
-            # recursivamente parsear la main statement
-            return lineage_from_statement(main_stmt, cte_combined)
-        else:
-            # no se pudo identificar main statement; devolver vacÃ­o o un registro general
-            rec = {
-                'id': str(uuid.uuid4()),
-                'consulta': stmt,
-                'tabla_origen': None,
-                'tabla_destino': None,
-                'campo_origen': None,
-                'campo_destino': None,
-                'transformacion_aplicada': None,
-                'recomendaciones': 'with detectado pero no se pudo localizar la sentencia principal (insert/create/select) - revisar manualmente'
-            }
-            return [rec]
-
-    # -------------------------
-    # Otros casos: SELECT independiente => reporte tablas origen utilizadas
-    # -------------------------
-    select_items = extract_select_items(stmt)
-    if select_items:
-        from_clause = extract_from_clause(stmt)
-        src_tables = get_src_tables_with_ctes(from_clause, cte_map)
-        for (src_tab, alias) in src_tables:
-            rec = {
-                'id': str(uuid.uuid4()),
-                'consulta': stmt,
-                'tabla_origen': src_tab,
-                'tabla_destino': None,
-                'campo_origen': None,
-                'campo_destino': None,
-                'transformacion_aplicada': None,
-                'recomendaciones': 'consulta select independiente; listado de tablas origen detectadas'
-            }
-            results.append(rec)
-        if results:
-            return results
-
-    # si no se pudo parsear nada
-    rec = {
-        'id': str(uuid.uuid4()),
-        'consulta': stmt,
-        'tabla_origen': None,
-        'tabla_destino': None,
-        'campo_origen': None,
-        'campo_destino': None,
-        'transformacion_aplicada': None,
-        'recomendaciones': 'no se detecto un patron insert/create/select reconocible; requerir parser avanzado o revisar manualmente'
-    }
-    return [rec]
-
 # -------------------------
 # FunciÃ³n principal pÃºblica
 # -------------------------
