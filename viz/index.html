@@ -1,44 +1,120 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Visualización de Linaje</title>
+  <title>Visualizador de Linaje de Datos</title>
   <link rel="stylesheet" href="styles.css">
-  <script defer src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
-  <script defer src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
-  <script defer src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-  <script defer src="app.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/tippy.js@6.3.7/dist/tippy.css">
+  <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <script src="https://unpkg.com/@popperjs/core@2.11.8/dist/umd/popper.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape-popper/2.0.0/cytoscape-popper.min.js" referrerpolicy="no-referrer"></script>
+  <script src="https://unpkg.com/tippy.js@6.3.7/dist/tippy-bundle.umd.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Linaje de Datos</h1>
-    <p>Visualización generada a partir de <code>json/linaje.json</code>. Los orígenes provenientes de <strong>funciones</strong> se muestran en rojo.</p>
-    <div class="controls">
-      <button id="refresh-btn">Actualizar</button>
-      <label>
-        Distribución:
-        <select id="layout-select">
-          <option value="dagre">Flujo Horizontal</option>
-          <option value="breadthfirst">Jerárquico</option>
-          <option value="cose">Orgánico</option>
-        </select>
-      </label>
-    </div>
-  </header>
-
-  <main>
-    <div id="cy"></div>
-    <aside id="details">
-      <h2>Detalles</h2>
-      <div id="details-content">
-        <p>Haz clic en cualquier columna o conexión para ver la información asociada.</p>
+  <div class="page">
+    <header class="app-header">
+      <div>
+        <h1>Linaje de Datos</h1>
+        <p class="subtitle">Explora relaciones a nivel tabla o campo a partir de <code>json/linaje-tablas.json</code> y <code>json/linaje-campos.json</code>.</p>
       </div>
-    </aside>
-  </main>
+      <div class="header-actions">
+        <button id="reset-view-btn" type="button">Reiniciar vista</button>
+        <button id="reload-btn" type="button">Recargar datos</button>
+      </div>
+    </header>
 
-  <footer>
-    <small>Para servir los archivos de forma local puedes ejecutar <code>python -m http.server</code> y abrir <code>http://localhost:8000/viz/</code>.</small>
-  </footer>
+    <section class="filters">
+      <div class="filter">
+        <label for="view-mode">Tipo de vista</label>
+        <select id="view-mode">
+          <option value="tables">Nivel tablas</option>
+          <option value="fields">Nivel campos</option>
+        </select>
+      </div>
+      <div class="filter filter--zone">
+        <label for="zone-select">Zona destino</label>
+        <select id="zone-select">
+          <option value="all">Todas</option>
+        </select>
+      </div>
+      <div class="filter filter--table">
+        <label for="table-select">Tabla destino (resultados)</label>
+        <select id="table-select" class="select--truncate" disabled>
+          <option value="all">Selecciona una zona</option>
+        </select>
+      </div>
+      <div class="filter checkbox">
+        <input type="checkbox" id="show-all-results">
+        <label for="show-all-results">Mostrar todas las tablas resultados de la zona</label>
+      </div>
+      <div class="filter checkbox">
+        <input type="checkbox" id="hide-lz">
+        <label for="hide-lz">Ocultar orígenes lz.estatico / lz.funcion</label>
+      </div>
+      <div class="filter">
+        <label for="layout-select">Distribución</label>
+        <select id="layout-select">
+          <option value="columns">Columnas por zona</option>
+          <option value="dagre">Flujo libre (dagre)</option>
+          <option value="breadthfirst">Jerárquico</option>
+          <option value="cose">Orgánico (CoSE)</option>
+        </select>
+      </div>
+    </section>
+
+    <main class="workspace">
+      <div class="graph-wrapper">
+        <div class="zone-overlay" aria-hidden="true">
+          <div class="zone-panel zone-left">
+            <span class="zone-title">Tablas crudas</span>
+            <span class="zone-subtitle">s_bani___.____</span>
+          </div>
+          <div class="zone-divider"></div>
+          <div class="zone-panel zone-center">
+            <span class="zone-title">Zona proceso</span>
+            <span class="zone-subtitle">proceso___.____ · lz.funcion · lz.estatico</span>
+          </div>
+          <div class="zone-divider"></div>
+          <div class="zone-panel zone-right">
+            <span class="zone-title">Zona resultados</span>
+            <span class="zone-subtitle">resultados___.____</span>
+          </div>
+        </div>
+        <div id="cy" aria-label="Lienzo principal del linaje"></div>
+      </div>
+      <aside class="sidebar">
+        <section class="details">
+          <h2>Detalles</h2>
+          <div id="details-content">
+            <p>Selecciona una tabla, campo o relación para ver más información.</p>
+          </div>
+        </section>
+        <section class="status">
+          <h2>Estado</h2>
+          <div id="status-message">Cargando datos…</div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="app-footer">
+      <div class="legend">
+        <h2>Referencias de color</h2>
+        <ul>
+          <li><span class="legend-dot zone-resultados"></span>Zona resultados (<code>resultados___.____</code>)</li>
+          <li><span class="legend-dot zone-proceso"></span>Zona proceso (<code>proceso___.____</code>)</li>
+          <li><span class="legend-dot zone-s_bani"></span>Zona cruda (<code>s_bani___.____</code>)</li>
+          <li><span class="legend-dot zone-lz-estatico"></span>lz.estatico</li>
+          <li><span class="legend-dot zone-lz-funcion"></span>lz.funcion</li>
+          <li><span class="legend-dot zone-otro"></span>Otros</li>
+        </ul>
+      </div>
+      <p class="footer-note">Sirve la carpeta con un servidor estático (por ejemplo <code>python -m http.server</code>) para evitar errores CORS.</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
