@@ -1,4 +1,4 @@
-﻿"""
+"""
 Generador de linaje (impala sql) - python
 Salida: lista de dicts (json-serializable) con los campos:
 id, consulta, tabla_origen, tabla_destino, campo_origen, campo_destino, transformacion_aplicada, recomendaciones
@@ -17,14 +17,75 @@ import os
 import pandas as pd
 
 # -------------------------
+# Carga de consultas desde JSON de errores
+# -------------------------
+
+def cargar_queries_desde_json(ruta: str = 'json/linaje-erros.json') -> list:
+    """Carga una lista de consultas SQL desde un archivo JSON.
+
+    Acepta formatos:
+    - Lista de strings: ["select ...", "create ..."]
+    - Lista de objetos con la clave 'sql' o 'consulta'
+    - Diccionario con clave 'queries' apuntando a cualquiera de los anteriores
+    """
+    if not os.path.exists(ruta):
+        return []
+    try:
+        with open(ruta, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return []
+
+    def _extraer_listado(obj) -> list:
+        if obj is None:
+            return []
+        # Caso lista directa
+        if isinstance(obj, list):
+            out = []
+            for it in obj:
+                if isinstance(it, str):
+                    s = it.strip()
+                    if s:
+                        out.append(s)
+                elif isinstance(it, dict):
+                    s = it.get('sql') or it.get('consulta') or ''
+                    s = (s or '').strip()
+                    if s:
+                        out.append(s)
+            return out
+        # Caso dict con 'queries'
+        if isinstance(obj, dict):
+            if 'queries' in obj:
+                return _extraer_listado(obj.get('queries'))
+            # Intento de claves comunes
+            if 'sql' in obj or 'consulta' in obj:
+                s = obj.get('sql') or obj.get('consulta') or ''
+                s = (s or '').strip()
+                return [s] if s else []
+        return []
+
+    return _extraer_listado(data)
+
+# -------------------------
 # Helpers de anÃ¡lisis lÃ©xico simples (manejan parÃ©ntesis y comillas)
 # -------------------------
 
 def normalize_sql(sql: str) -> str:
-    """Normaliza: elimina comentarios, pasa a minúsculas y colapsa espacios."""
-    # eliminar comentarios de bloque y de línea
+    """Normaliza: elimina comentarios, pasa a minúsculas y colapsa espacios.
+
+    Reglas para '--' adicionales:
+    - Eliminar hasta llegar a: select, from, inner/left/right/full/cross join,
+      where, group by, order by, limit, having, punto y coma o fin de línea.
+    - También elimina cualquier comentario '--' posterior a un ';'.
+    """
+    # eliminar comentarios de bloque
     s = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.DOTALL)
-    s = re.sub(r'--.*?(?=\r?\n|$)', ' ', s)
+    # Orden de escape de '--':
+    # 1) hasta select|from|where|group by|order by|limit|having|join|coma|')'|salto de línea
+    sentinel1 = r",|\)|\bselect\b|\bfrom\b|\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\blimit\b|\bhaving\b|\b(?:inner|left|right|full|cross)\s+join\b|\r?\n|$"
+    s = re.sub(r'--.*?(?=' + sentinel1 + r')', ' ', s, flags=re.IGNORECASE)
+    # 2) eliminar cualquier comentario después de ';'
+    s = re.sub(r';\s*--.*?(?=\r?\n|$)', '; ', s, flags=re.IGNORECASE)
     # normalizar espacios y mayúsculas
     s = s.strip()
     s = s.lower()
@@ -330,11 +391,61 @@ def _is_function_without_fields(item: dict) -> bool:
         return True
     return False
 
+def _is_literal_expression(expr: str) -> bool:
+    if expr is None:
+        return False
+    e = expr.strip()
+    if not e:
+        return False
+    # números
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", e):
+        return True
+    # strings simples o dobles
+    if re.fullmatch(r"'(?:[^']|''|\\')*'", e) or re.fullmatch(r'"(?:[^"]|\"|"")*"', e):
+        return True
+    # booleanos o null
+    if e.lower() in {'true','false','null'}:
+        return True
+    return False
+
 
 def _build_records_for_item(item: dict, dest_col: str, target_table: str, src_tables: list,
                             stmt: str, recomendacion: str) -> list:
     records = []
+    # asegurar campo destino no nulo
+    if not dest_col:
+        dest_col = '*'
     if item.get('is_star'):
+        # mapear a nivel '*' por cada tabla fuente
+        uniques = []
+        for full, _alias in src_tables:
+            if full not in uniques:
+                uniques.append(full)
+        for src_tab in uniques:
+            rec = {
+                'id': str(uuid.uuid4()),
+                'consulta': stmt,
+                'tabla_origen': src_tab,
+                'tabla_destino': target_table,
+                'campo_origen': '*',
+                'campo_destino': '*',
+                'transformacion_aplicada': None,
+                'recomendaciones': 'mapeo por * (no se listan columnas); verificar metadatos para detalle'
+            }
+            records.append(rec)
+        # si no se detectaron tablas fuente
+        if not records:
+            rec = {
+                'id': str(uuid.uuid4()),
+                'consulta': stmt,
+                'tabla_origen': None,
+                'tabla_destino': target_table,
+                'campo_origen': '*',
+                'campo_destino': '*',
+                'transformacion_aplicada': None,
+                'recomendaciones': 'mapeo por * sin tablas fuente detectadas'
+            }
+            records.append(rec)
         return records
     origins = _unique_origin_tokens(item.get('origin_cols', []))
     expr = (item.get('expr') or '').strip()
@@ -344,6 +455,8 @@ def _build_records_for_item(item: dict, dest_col: str, target_table: str, src_ta
     transform = 'copy' if is_copy else (expr or None)
 
     if origins:
+        any_resolved = False
+        tmp_records = []
         for tok in origins:
             tabla = resolve_table_from_token(tok, src_tables)
             campo = tok.split('.')[-1] if '.' in tok else tok
@@ -357,32 +470,70 @@ def _build_records_for_item(item: dict, dest_col: str, target_table: str, src_ta
                 'transformacion_aplicada': transform,
                 'recomendaciones': recomendacion
             }
-            records.append(rec)
-    elif _is_function_without_fields(item):
-        expr_value = expr or item.get('raw') or 'funcion'
-        rec = {
-            'id': str(uuid.uuid4()),
-            'consulta': stmt,
-            'tabla_origen': 'funciones',
-            'tabla_destino': target_table,
-            'campo_origen': expr_value,
-            'campo_destino': dest_col,
-            'transformacion_aplicada': expr_value,
-            'recomendaciones': recomendacion
-        }
-        records.append(rec)
+            if tabla:
+                any_resolved = True
+            tmp_records.append(rec)
+        if any_resolved:
+            records.extend(tmp_records)
+        else:
+            # Ambigüo: múltiples tablas y no se pudo resolver origen -> usar mapeo '*'
+            uniques = []
+            for full, _alias in src_tables:
+                if full not in uniques:
+                    uniques.append(full)
+            if len(uniques) > 1:
+                for src_tab in uniques:
+                    rec = {
+                        'id': str(uuid.uuid4()),
+                        'consulta': stmt,
+                        'tabla_origen': src_tab,
+                        'tabla_destino': target_table,
+                        'campo_origen': '*',
+                        'campo_destino': '*',
+                        'transformacion_aplicada': transform,
+                        'recomendaciones': 'origen ambigüo con múltiples tablas; mapeo * aplicado'
+                    }
+                    records.append(rec)
+            else:
+                records.extend(tmp_records)
     else:
-        rec = {
-            'id': str(uuid.uuid4()),
-            'consulta': stmt,
-            'tabla_origen': None,
-            'tabla_destino': target_table,
-            'campo_origen': None,
-            'campo_destino': dest_col,
-            'transformacion_aplicada': transform,
-            'recomendaciones': recomendacion
-        }
-        records.append(rec)
+        if _is_function_without_fields(item):
+            expr_value = expr or item.get('raw') or 'funcion'
+            rec = {
+                'id': str(uuid.uuid4()),
+                'consulta': stmt,
+                'tabla_origen': 'lz.funcion',
+                'tabla_destino': target_table,
+                'campo_origen': expr_value,
+                'campo_destino': dest_col,
+                'transformacion_aplicada': expr_value,
+                'recomendaciones': recomendacion
+            }
+            records.append(rec)
+        elif _is_literal_expression(expr):
+            rec = {
+                'id': str(uuid.uuid4()),
+                'consulta': stmt,
+                'tabla_origen': 'lz.estatico',
+                'tabla_destino': target_table,
+                'campo_origen': expr,
+                'campo_destino': dest_col,
+                'transformacion_aplicada': expr,
+                'recomendaciones': recomendacion
+            }
+            records.append(rec)
+        else:
+            rec = {
+                'id': str(uuid.uuid4()),
+                'consulta': stmt,
+                'tabla_origen': None,
+                'tabla_destino': target_table,
+                'campo_origen': None,
+                'campo_destino': dest_col or '*',
+                'transformacion_aplicada': transform,
+                'recomendaciones': recomendacion
+            }
+            records.append(rec)
     return records
 
 def parse_ctes(stmt: str) -> dict:
@@ -416,6 +567,131 @@ def parse_ctes(stmt: str) -> dict:
         body = m.group(2).strip()
         cte_map[name] = body
     return cte_map
+
+def build_cte_column_map_from_map(cte_map: dict) -> dict:
+    """
+    A partir de un mapa de CTEs {name: select_body}, construye
+    name -> { output_col_name: [lista de tokens 'schema.table.col' o 'table.col'] }
+    """
+    result = {}
+    for name, body in (cte_map or {}).items():
+        try:
+            items = extract_select_items(body)
+            parsed_items = [parse_select_item(it) for it in items]
+            from_clause = extract_from_clause(body)
+            src_tables = extract_tables_from_from_clause(from_clause)
+            col_map = {}
+            for item in parsed_items:
+                # determinar nombre de la columna de salida del CTE
+                dest = item.get('alias')
+                if not dest:
+                    if item.get('origin_cols'):
+                        tmp = item['origin_cols'][-1]
+                        dest = tmp.split('.')[-1] if '.' in tmp else tmp
+                if not dest:
+                    # no se puede mapear (ej: *)
+                    continue
+                origins = _unique_origin_tokens(item.get('origin_cols', []))
+                resolved = []
+                if origins:
+                    for tok in origins:
+                        tbl = resolve_table_from_token(tok, src_tables)
+                        col = tok.split('.')[-1] if '.' in tok else tok
+                        if tbl:
+                            fq = f"{tbl}.{col}"
+                        else:
+                            fq = col
+                        if fq not in resolved:
+                            resolved.append(fq)
+                if resolved:
+                    col_map[dest] = resolved
+            result[name] = col_map
+        except Exception:
+            continue
+    return result
+
+def expand_item_origins_via_cte(item: dict, from_clause: str, cte_col_map: dict) -> dict:
+    """Devuelve una copia del item con origin_cols expandido cuando refiera CTEs.
+    Soporta expansión recursiva (hasta un límite) para CTEs anidados.
+    """
+    if not item:
+        return item
+    origins = item.get('origin_cols') or []
+    if not origins:
+        return item
+    tbls = extract_tables_from_from_clause(from_clause)
+    alias_map = {}
+    for full, alias in tbls:
+        if alias:
+            alias_map[alias] = full
+        alias_map[full] = full
+
+    def expand_once(tokens: list) -> list:
+        out = []
+        for tok in tokens:
+            t = tok.strip()
+            if not t:
+                continue
+            if '.' in t:
+                parts = t.split('.')
+                first = parts[0]
+                col = parts[-1]
+                base = alias_map.get(first, first)
+                # si base es un CTE conocido, expandir vía su mapa
+                if base in (cte_col_map or {}):
+                    mapped = (cte_col_map.get(base) or {}).get(col)
+                    if mapped:
+                        for m in mapped:
+                            if m not in out:
+                                out.append(m)
+                        continue
+            else:
+                # sin calificar: si única tabla es un CTE
+                uniques = []
+                for full, _a in tbls:
+                    if full not in uniques:
+                        uniques.append(full)
+                if len(uniques) == 1 and uniques[0] in (cte_col_map or {}):
+                    mapped = (cte_col_map.get(uniques[0]) or {}).get(t)
+                    if mapped:
+                        for m in mapped:
+                            if m not in out:
+                                out.append(m)
+                        continue
+            # sin expansión
+            if t not in out:
+                out.append(t)
+        return out
+
+    prev = origins
+    for _ in range(5):  # límite de profundidad
+        curr = expand_once(prev)
+        # además expandir referencias a otros CTEs (sin alias del FROM): p.ej. 'a.col'
+        extra = []
+        for tok in curr:
+            if '.' in tok:
+                p = tok.split('.')[0]
+                col = tok.split('.')[-1]
+                if p in (cte_col_map or {}):
+                    mapped = (cte_col_map.get(p) or {}).get(col)
+                    if mapped:
+                        for m in mapped:
+                            if m not in extra:
+                                extra.append(m)
+                    else:
+                        extra.append(tok)
+                else:
+                    extra.append(tok)
+            else:
+                extra.append(tok)
+        curr2 = extra
+        if curr2 == prev:
+            break
+        prev = curr2
+
+    item2 = dict(item)
+    item2['origin_cols'] = prev
+    return item2
 
 def get_src_tables_with_ctes(from_clause: str, cte_map: dict) -> list:
     """
@@ -559,10 +835,11 @@ def parse_create_target(stmt: str):
         cols = [c.strip() for c in cols_str.split(',') if c.strip()]
     else:
         cols = None
-    # determinar si es CTAS (as select)
-    as_pos = find_top_level_keyword(stmt, 'as', tpos)
+    # determinar si es CTAS: es suficiente con detectar un SELECT top-level
+    # después de la definición de la tabla. Esto evita falsos negativos por
+    # la presencia de 'stored as parquet' o 'tblproperties ... as ...'.
     select_pos = find_top_level_keyword(stmt, 'select', tpos)
-    is_ctas = (as_pos != -1 and select_pos != -1 and as_pos < select_pos)
+    is_ctas = (select_pos != -1)
     return tabla, cols, is_ctas
 
 def parse_create_like(stmt: str):
@@ -622,14 +899,16 @@ def parse_select_item(item: str) -> dict:
         res['expr'] = expr
         it = expr
     else:
-        # si no hay 'as', puede existir 'expr alias' -> detectamos Ãºltimo token simple al final
+        # si no hay 'as', puede existir 'expr alias' -> detectamos último token simple al final
         m_alias2 = re.search(r'\s+([a-z0-9_]+)\s*$', it)
         if m_alias2:
-            # para no confundir functions o 'case when', sÃ³lo tomamos alias si la parte antes no termina con un parÃ©ntesis ni contiene espacios raros
             before = it[:m_alias2.start()].strip()
             last_tok = m_alias2.group(1)
-            # heurÃ­stica: si before contiene espacios y no termina en ')' o es una expresiÃ³n sencilla, consideramos alias
-            if re.search(r'\s', before) and not before.endswith(')') and not before.endswith(']'):
+            # Considerar alias si:
+            # - hay espacios en la expresión (expr alias), o
+            # - la expresión termina en ')' o ']' (func(... ) alias), y
+            # - no parece un identificador calificado 't.'
+            if (re.search(r'\s', before) or before.endswith(')') or before.endswith(']')) and not before.endswith('.'):
                 res['alias'] = last_tok
                 res['expr'] = before
                 it = before
@@ -642,21 +921,21 @@ def parse_select_item(item: str) -> dict:
         else:
             res['origin_cols'] = ['*']
         return res
-    # extraer columnas simples de la expresiÃ³n: buscar patrones schema.tab.col o table.col o bare col
-    # bÃºsqueda de formatos schema.table.col o table.col o col
-    # buscar todos los identificadores separados por punto
-    col_refs = re.findall(r'([a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+)', it)
-    # col_refs incluye tokens y palabras; no todos son columnas; filtramos palabras reservadas y functions comunes
-    keywords = set(['case','when','then','else','end','count','sum','min','max','avg','cast','over','partition','order','by','desc','asc','distinct','row_number','and','or','coalesce','lag','lead','dense_rank','rank','current_timestamp','current_date','current_time','now'])
-    cols = []
-    for token in col_refs:
-        if token in keywords:
-            continue
-        # token que tiene punto puede ser table.col o schema.table (si tiene dos puntos lo dejamos)
-        # heurÃ­stica: si token coincide con funcname(...) no lo incluimos (pero el regex ya saca solo nombres)
-        cols.append(token)
-    # preferimos detectar referencias columna tipo table.col o schema.table.col
-    res['origin_cols'] = cols
+    def _tokens_from_expr(expr: str) -> list:
+        # Caso especial: CASE ... THEN ... [ELSE ...] END -> solo tokens de los THEN
+        el = expr.lower()
+        then_parts = re.findall(r'\bthen\b(.*?)(?=\bwhen\b|\belse\b|\bend\b)', expr, flags=re.IGNORECASE|re.DOTALL)
+        scan_areas = then_parts if then_parts else [expr]
+        cols = []
+        for area in scan_areas:
+            col_refs = re.findall(r'([a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+\.[a-z0-9_]+|[a-z0-9_]+)', area)
+            keywords = set(['case','when','then','else','end','count','sum','min','max','avg','cast','over','partition','order','by','desc','asc','distinct','row_number','and','or','coalesce','lag','lead','dense_rank','rank','current_timestamp','current_date','current_time','now','stored','parquet','tblproperties','transactional','true','false','textfile','orc','avro','sequencefile','rcfile','delimited','by'])
+            for token in col_refs:
+                if token in keywords:
+                    continue
+                cols.append(token)
+        return cols
+    res['origin_cols'] = _tokens_from_expr(it)
     return res
 
 # -------------------------
@@ -724,23 +1003,29 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         cte_local = parse_ctes(stmt)
         cte_merged = dict(cte_map)
         cte_merged.update(cte_local)
+        # construir mapeo de columnas de CTEs (para propagar orígenes)
+        cte_col_map = build_cte_column_map_from_map(cte_merged)
+        parsed_items = [expand_item_origins_via_cte(it, from_clause, cte_col_map) for it in parsed_items]
         src_tables = get_src_tables_with_ctes(from_clause, cte_merged)
-        # si select_items contiene alguna star o no se especifican columnas destino -> relaciÃ³n tabla->tabla
+        # si select_items contiene alguna star o no se especifican columnas destino -> mapeo '*'
         has_star = any(item['is_star'] for item in parsed_items)
         if has_star or target_cols is None and (len(select_items) == 0 or any(item.strip() == '' for item in select_items)):
-            # relaciÃ³n a nivel tabla: por las reglas del usuario, si se crea tabla en base al esquema de otra y no se indican campos -> tabla->tabla
+            # mapeo '*' para cada tabla fuente
+            uniques = []
             for (src_tab, alias) in src_tables:
+                if src_tab not in uniques:
+                    uniques.append(src_tab)
+            for src_tab in uniques:
                 rec = {
                     'id': str(uuid.uuid4()),
                     'consulta': stmt,
                     'tabla_origen': src_tab,
                     'tabla_destino': target_table,
-                    'campo_origen': None,
-                    'campo_destino': None,
+                    'campo_origen': '*',
+                    'campo_destino': '*',
                     'transformacion_aplicada': None,
-                    'recomendaciones': 'relacion a nivel de tablas (ctas sin lista de campos o uso de *) - verificar esquema en metastore si necesita mapping columna a columna'
+                    'recomendaciones': 'mapeo por * (ctas sin lista de campos o uso de *)'
                 }
-                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             # si no hay src_tables detectadas, crear un registro general
             if not src_tables:
@@ -749,12 +1034,11 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'consulta': stmt,
                     'tabla_origen': None,
                     'tabla_destino': target_table,
-                    'campo_origen': None,
-                    'campo_destino': None,
+                    'campo_origen': '*',
+                    'campo_destino': '*',
                     'transformacion_aplicada': None,
-                    'recomendaciones': 'relacion a nivel de tablas (ctas sin lista de campos) - no se detectaron tablas origen'
+                    'recomendaciones': 'mapeo por * sin tablas origen detectadas'
                 }
-                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
         else:
             # mapeo columna a columna (intentar inferir)
@@ -807,25 +1091,31 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
         target_cols = cols_insert  # None o lista
         select_items = extract_select_items(stmt)
         from_clause = extract_from_clause(stmt)
+        # Expandir orígenes a través de CTEs heredados (si los hay)
+        cte_col_map = build_cte_column_map_from_map(cte_map or {})
         src_tables = get_src_tables_with_ctes(from_clause, cte_map)
         # parse items
         parsed_items = [parse_select_item(it) for it in select_items]
+        parsed_items = [expand_item_origins_via_cte(it, from_clause, cte_col_map) for it in parsed_items]
         # si existe algÃºn item is_star => relaciÃ³n tabla->tabla
         any_star = any(it['is_star'] for it in parsed_items)
         if any_star:
-            # cuando hay '*' en el select sin conocer campos, mantÃ©n relaciÃ³n a nivel de tablas
+            # cuando hay '*' en el select, mapeamos '*' por cada tabla fuente
+            uniques = []
             for (src_tab, alias) in src_tables:
+                if src_tab not in uniques:
+                    uniques.append(src_tab)
+            for src_tab in uniques:
                 rec = {
                     'id': str(uuid.uuid4()),
                     'consulta': stmt,
                     'tabla_origen': src_tab,
                     'tabla_destino': target_table,
-                    'campo_origen': None,
-                    'campo_destino': None,
+                    'campo_origen': '*',
+                    'campo_destino': '*',
                     'transformacion_aplicada': None,
-                    'recomendaciones': 'relacion a nivel de tablas por uso de * en el select; si necesita mapping columna a columna, especificar columnas en el insert o consultar metastore'
+                    'recomendaciones': 'mapeo por * en insert: no se listan columnas'
                 }
-                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             if not src_tables:
                 rec = {
@@ -833,12 +1123,11 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
                     'consulta': stmt,
                     'tabla_origen': None,
                     'tabla_destino': target_table,
-                    'campo_origen': None,
-                    'campo_destino': None,
+                    'campo_origen': '*',
+                    'campo_destino': '*',
                     'transformacion_aplicada': None,
-                    'recomendaciones': 'relacion a nivel de tablas por uso de *; no se detectaron tablas origen'
+                    'recomendaciones': 'mapeo por * en insert sin tablas origen detectadas'
                 }
-                _fallback_tabla_origen(rec, src_tables)
                 results.append(rec)
             return results
         # No hay stars -> intentamos mapear columnas
@@ -887,6 +1176,50 @@ def lineage_from_statement(stmt: str, cte_map: dict=None) -> list:
 # FunciÃ³n principal pÃºblica
 # -------------------------
 
+    # Fallback: si no se identificó ningún patrón soportado, devolver un registro guía
+    # Protección extra: si la sentencia contiene "create table" y luego un "select * from",
+    # generar mapeo '*/*' por cada tabla fuente detectada como CTAS simplificado.
+    try:
+        if 'create ' in stmt and ' table ' in stmt and ' select ' in stmt and ' from ' in stmt:
+            # intentar extraer destino de forma laxa
+            m_dest = re.search(r'create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z0-9_]+(?:\.[a-z0-9_]+)?)', stmt)
+            target_table = m_dest.group(1) if m_dest else None
+            from_clause = extract_from_clause(stmt)
+            src_tables = extract_tables_from_from_clause(from_clause)
+            if target_table and src_tables:
+                uniques = []
+                records = []
+                for (src_tab, _a) in src_tables:
+                    if src_tab not in uniques:
+                        uniques.append(src_tab)
+                        records.append({
+                            'id': str(uuid.uuid4()),
+                            'consulta': stmt,
+                            'tabla_origen': src_tab,
+                            'tabla_destino': target_table,
+                            'campo_origen': '*',
+                            'campo_destino': '*',
+                            'transformacion_aplicada': None,
+                            'recomendaciones': 'fallback ctas: mapeo por * al detectar create table ... select * from ...'
+                        })
+                if records:
+                    return records
+    except Exception:
+        pass
+
+    rec = {
+        'id': str(uuid.uuid4()),
+        'consulta': stmt,
+        'tabla_origen': None,
+        'tabla_destino': None,
+        'campo_origen': None,
+        'campo_destino': None,
+        'transformacion_aplicada': None,
+        'recomendaciones': 'no se pudo interpretar la sentencia: valide uso de WITH/INSERT/CTAS o comentarios -- en línea'
+    }
+    return [rec]
+
+
 def generar_linaje_impala(sql_text: str) -> list:
     """
     Dado un texto sql (puede contener mÃºltiples sentencias) devuelve lista de registros de linaje.
@@ -916,116 +1249,255 @@ def guardar_linaje_en_json(datos, ruta='json/linaje.json'):
 # Ejemplos de uso / pruebas
 # -------------------------
 
-if __name__ == "__main__":
-    ejemplos = [
-        # insert con columnas explicitas
-        """
-        insert into sbani.dest_table (id, nombre, telefono)
-        select t.id, t.full_name as nombre, t.phone from sbani.source_table t;
-        """,
-        # insert con star
-        """
-        insert into sbani.dest_all
-        select * from sbani.source_all;
-        """,
-        # create table as select (ctas) sin columnas
-        """
-        create table sbani.ctas_table as
-        select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id;
-        """,
-        # with ... insert ... as
-        """
-        with cte as (
-           select id, valor from sbani.origen
-        )
-        insert into sbani.destino select id, valor from cte;
-        """,
-        # create like (estructura) y luego insert con filtro
-        """
-        CREATE TABLE IF NOT EXISTS dwh.ventas_estructura LIKE raw.ventas;
+def _tabla_level_postscan(stmt: str, target_table: str) -> list:
+    """Escaneo a nivel tabla para patrones s_bani*.*, proceso*.*, resultados*.* después del FROM.
+    Retorna registros * / * únicos por origen->destino.
+    """
+    if not target_table:
+        return []
+    from_clause = extract_from_clause(stmt)
+    if not from_clause:
+        return []
+    # encontrar tablas con prefijo de esquemas indicados
+    candidates = re.findall(r'\b((?:s_bani|proceso|resultados)[a-z0-9_]*)\.([a-z0-9_]+)\b', from_clause)
+    uniques = []
+    out = []
+    for schema, table in candidates:
+        full = f"{schema}.{table}"
+        if full in uniques:
+            continue
+        uniques.append(full)
+        rec = {
+            'id': str(uuid.uuid4()),
+            'consulta': stmt,
+            'tabla_origen': full,
+            'tabla_destino': target_table,
+            'campo_origen': '*',
+            'campo_destino': '*',
+            'transformacion_aplicada': None,
+            'recomendaciones': 'post-scan tabla: patrón de esquema s_bani/proceso/resultados'
+        }
+        out.append(rec)
+    return out
 
-        INSERT INTO dwh.ventas_estructura
-        SELECT * FROM raw.ventas
-        WHERE fecha_venta >= '2025-01-01';
-        """,
-        # CTAS con WITH y múltiples CTEs y joins + agregaciones
-        """
-        CREATE TABLE IF NOT EXISTS dwh.ventas_resumen
-        STORED AS PARQUET
-        AS
-        WITH ventas_filtradas AS (
-            SELECT 
-                v.cliente_id,
-                v.producto_id,
-                v.cantidad,
-                v.precio,
-                v.fecha_venta
-            FROM raw.ventas v
-            WHERE v.fecha_venta >= '2025-01-01'
-        ),
-        clientes_activos AS (
+if __name__ == "__main__":
+    # 1) Intentar cargar consultas desde json/linaje-erros.json
+    ruta_errores = 'json/linaje-erros.json'
+    consultas = cargar_queries_desde_json(ruta_errores)
+    desde_json = bool(consultas)
+
+    # 2) Si no hay, usar ejemplos embebidos como fallback
+    if not consultas:
+        consultas = [
+            """
+            insert into sbani.dest_table (id, nombre, telefono)
+            select t.id, t.full_name as nombre, t.phone from sbani.source_table t;
+            """,
+            """
+            insert into sbani.dest_all
+            select * from sbani.source_all;
+            """,
+            """
+            create table sbani.ctas_table as
+            select a.col1, b.col2 from sbani.tabla_a a join sbani.tabla_b b on a.id = b.id;
+            """,
+            """
+            with cte as (
+               select id, valor from sbani.origen
+            )
+            insert into sbani.destino select id, valor from cte;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS dwh.ventas_estructura LIKE raw.ventas;
+
+            INSERT INTO dwh.ventas_estructura
+            SELECT * FROM raw.ventas
+            WHERE fecha_venta >= '2025-01-01';
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS dwh.ventas_resumen
+            STORED AS PARQUET
+            AS
+            WITH ventas_filtradas AS (
+                SELECT 
+                    v.cliente_id,
+                    v.producto_id,
+                    v.cantidad,
+                    v.precio,
+                    v.fecha_venta
+                FROM raw.ventas v
+                WHERE v.fecha_venta >= '2025-01-01'
+            ),
+            clientes_activos AS (
+                SELECT
+                    c.cliente_id,
+                    c.nombre,
+                    c.segmento
+                FROM mkt.clientes c
+                WHERE c.estado = 'activo'
+            )
+            SELECT
+                ca.cliente_id,
+                ca.nombre,
+                ca.segmento,
+                SUM(vf.cantidad * vf.precio) AS total_comprado,
+                COUNT(DISTINCT vf.producto_id) AS productos_distintos
+            FROM ventas_filtradas vf
+            JOIN clientes_activos ca
+                ON vf.cliente_id = ca.cliente_id
+            GROUP BY ca.cliente_id, ca.nombre, ca.segmento;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ventas_resumen
+            STORED AS PARQUET
+            AS
+            WITH ventas_filtradas AS (
+                SELECT 
+                    cliente_id,
+                    producto_id,
+                    cantidad,
+                    precio,
+                    fecha_venta
+                FROM ventas
+                WHERE fecha_venta >= '2025-01-01'
+            ),
+            totales_por_cliente AS (
+                SELECT
+                    cliente_id,
+                    SUM(cantidad * precio) AS total_comprado,
+                    COUNT(DISTINCT producto_id) AS productos_distintos
+                FROM ventas_filtradas
+                GROUP BY cliente_id
+            )
             SELECT
                 c.cliente_id,
-                c.nombre,
-                c.segmento
-            FROM mkt.clientes c
-            WHERE c.estado = 'activo'
-        )
-        SELECT
-            ca.cliente_id,
-            ca.nombre,
-            ca.segmento,
-            SUM(vf.cantidad * vf.precio) AS total_comprado,
-            COUNT(DISTINCT vf.producto_id) AS productos_distintos
-        FROM ventas_filtradas vf
-        JOIN clientes_activos ca
-            ON vf.cliente_id = ca.cliente_id
-        GROUP BY ca.cliente_id, ca.nombre, ca.segmento;
-        """,
-        # CTAS similar sin esquema en nombres
-        """
-        CREATE TABLE IF NOT EXISTS ventas_resumen
-        STORED AS PARQUET
-        AS
-        WITH ventas_filtradas AS (
-            SELECT 
-                cliente_id,
-                producto_id,
-                cantidad,
-                precio,
-                fecha_venta
-            FROM ventas
-            WHERE fecha_venta >= '2025-01-01'
-        ),
-        totales_por_cliente AS (
-            SELECT
-                cliente_id,
-                SUM(cantidad * precio) AS total_comprado,
-                COUNT(DISTINCT producto_id) AS productos_distintos
-            FROM ventas_filtradas
-            GROUP BY cliente_id
-        )
-        SELECT
-            c.cliente_id,
-            c.total_comprado,
-            c.productos_distintos,
-            CURRENT_TIMESTAMP() AS fecha_proceso
-        FROM totales_por_cliente c;
-        """
-    ]
+                c.total_comprado,
+                c.productos_distintos,
+                CURRENT_TIMESTAMP() AS fecha_proceso
+            FROM totales_por_cliente c;
+            """
+        ]
+        print("No se encontró json/linaje-erros.json o estaba vacío. Usando ejemplos embebidos.")
+    else:
+        print(f"Se cargaron {len(consultas)} consultas desde {ruta_errores}.")
 
+    # 3) Procesar en bloque, de forma tolerante a errores
     linajes = []
-    for idx, sql in enumerate(ejemplos, 1):
-        print("SQL ----")
-        print(sql.strip())
-        lin = generar_linaje_impala(sql)
-        linajes.extend(lin)
-        print("Lineage JSON:")
-        print(json.dumps(lin, indent=2, ensure_ascii=False))
-        print("\n" + "="*60 + "\n")
-    # Guardar resultado en archivo JSON
-    df_linaje = pd.DataFrame(linajes)
-    print("DataFrame generado (primeras filas):")
-    
-    # print(df_linaje.head())
-    #guardar_linaje_en_json(linajes)
+    linaje_tablas = []
+    errores = 0
+    errores_detalle = []
+    for idx, sql in enumerate(consultas, 1):
+        try:
+            lin = generar_linaje_impala(sql)
+            linajes.extend(lin)
+            # post-scan por tabla (único por destino)
+            try:
+                stmt_norm = normalize_sql(sql)
+                # obtener destino
+                t_cte, c_cte, is_ctas = parse_create_target(stmt_norm)
+                t_ins, c_ins = parse_insert_target(stmt_norm)
+                target = t_cte if is_ctas and t_cte else (t_ins if t_ins else None)
+                if target:
+                    lin_t = _tabla_level_postscan(stmt_norm, target)
+                    # Unificar por (origen,destino)
+                    seen = set((r['tabla_origen'], r['tabla_destino']) for r in linaje_tablas)
+                    for r in lin_t:
+                        key = (r['tabla_origen'], r['tabla_destino'])
+                        if key not in seen:
+                            seen.add(key)
+                            linaje_tablas.append(r)
+            except Exception:
+                pass
+        except Exception as e:
+            errores += 1
+            try:
+                errores_detalle.append({
+                    'index': idx,
+                    'error': str(e),
+                    'sql': (sql or '')[:1000]
+                })
+            except Exception:
+                pass
+            # continuar con las demás
+            continue
+
+    # 4) Guardar resultado
+    os.makedirs('json', exist_ok=True)
+    salida = 'json/linaje-erros.linaje.json' if desde_json else 'json/linaje.json'
+    guardar_linaje_en_json(linajes, ruta=salida)
+    # Guardar post-scan de tablas
+    try:
+        guardar_linaje_en_json(linaje_tablas, ruta='json/linaje-tablas.json')
+    except Exception:
+        pass
+    if errores_detalle:
+        # Guardar log de errores para diagnóstico
+        try:
+            with open('json/linaje-erros.errors.log.json', 'w', encoding='utf-8') as f:
+                json.dump(errores_detalle, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    # 5) Resumen
+    print(f"Consultas procesadas: {len(consultas)} | Registros linaje: {len(linajes)} | Errores: {errores}")
+    print(f"Salida guardada en: {salida}")
+
+    # 6) Auditoría básica sobre el resultado generado (según reglas solicitadas)
+    def auditar_linaje(ruta_json: str):
+        problemas = []
+        try:
+            with open(ruta_json, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            return []
+
+        def _tiene_punto(v: str) -> bool:
+            return isinstance(v, str) and ('.' in v)
+
+        for rec in data:
+            try:
+                rid = rec.get('id')
+                sql = rec.get('consulta') or ''
+                torig = rec.get('tabla_origen')
+                tdest = rec.get('tabla_destino')
+                corig = rec.get('campo_origen')
+                cdest = rec.get('campo_destino')
+                transf = rec.get('transformacion_aplicada') or ''
+
+                # 1) campo_destino no puede ser nulo
+                if cdest is None:
+                    problemas.append({'id': rid, 'causa': 'dest_campo_nulo', 'detalle': 'campo_destino es nulo'})
+
+                # 2) tablas deben tener al menos un punto, excepto lz.funcion/lz.estatico
+                if not tdest or not _tiene_punto(tdest):
+                    problemas.append({'id': rid, 'causa': 'dest_tabla_invalida', 'detalle': f"tabla_destino inválida: {tdest}"})
+                if not torig or (not _tiene_punto(torig) and not (isinstance(torig, str) and torig.startswith('lz.'))):
+                    problemas.append({'id': rid, 'causa': 'origen_tabla_invalida', 'detalle': f"tabla_origen inválida: {torig}"})
+
+                # 3) consistencia de '*'
+                if corig == '*' and cdest != '*':
+                    problemas.append({'id': rid, 'causa': 'estrella_inconsistente', 'detalle': "campo_origen '*' pero destino distinto de '*'"})
+
+                # 4) Heurística: alias de CTE mal propagado (ej: y_max en WITH)
+                if isinstance(corig, str) and re.search(r"\bwith\b.*?\bas\s+" + re.escape(corig) + r"\b", sql, flags=re.DOTALL):
+                    problemas.append({'id': rid, 'causa': 'cte_alias_como_origen', 'detalle': f"Origen parece alias de CTE: {corig}"})
+
+                # 5) Función sin origen marcado como lz.funcion
+                if '(' in transf and ')' in transf and torig != 'lz.funcion' and (corig is None or isinstance(corig, str) and not corig.strip()):
+                    problemas.append({'id': rid, 'causa': 'funcion_sin_lz_funcion', 'detalle': f"Transformación parece función: {transf}"})
+
+                # 6) Estático sin lz.estatico
+                if isinstance(corig, str) and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", corig) and torig != 'lz.estatico':
+                    problemas.append({'id': rid, 'causa': 'estatico_sin_lz_estatico', 'detalle': f"Valor estático como origen: {corig}"})
+            except Exception:
+                continue
+        return problemas
+
+    problemas = auditar_linaje(salida)
+    if problemas:
+        try:
+            with open('json/linaje-auditoria.json', 'w', encoding='utf-8') as f:
+                json.dump(problemas, f, ensure_ascii=False, indent=2)
+            print(f"Auditoría: {len(problemas)} posibles incidencias -> json/linaje-auditoria.json")
+        except Exception:
+            print("Auditoría: no se pudo escribir json/linaje-auditoria.json")
