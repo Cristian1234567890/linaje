@@ -1,0 +1,65 @@
+Hoy en dia como esta nuestra vista el procesamiento inicial, asi como cargar/estraer los datos de cada zona estan desde el lado del frontend los que causara muchos problemas de procesamiento en el cliente, lo que quiero hacer es crear el back end el cual se encargue de procesar lo que el cliete (frontent) necesita, es decir las consultas que le enviara, inicial mente realisaremos las pruebas en mi maquina local, pero el objetivo final es que ese servicio quede en la nube asi como el front end.Considera que debes mantener la lógica que tenemos actualmente en nuestro js, pero la que tenga que ver con procesamiento de los datos/busqueda/tramiento si se tiene que llevar al servicio.
+
+Utilicemos la opcion con  python y fastapi, principalmente porque inicialmente los datos estan en json y necesito python para procesarlos más rápido.  
+
+Recuerda esta es la versión estable de mi codigo es la que te comparto.
+
+Contratos api esperados, pero agrega los que adicionalmente consideres, sin salir de las restricciones establecidas:
+
+* Filtrado inicial (poblar combos)
+
+GET /api/metadata/zones
+GET /api/metadata/tables?zone=resultados
+
+* Relaciones (nivel tabla/campo) + filtros
+
+* Paginación 
+
+¿Qué validaciones tienes en el JS? (Ej.: ¿verificar que campo_origen y campo_destino no sean null o *? ¿Que existan en la tabla origen/destino?)
+
+R. sanitizeRecords, normalizeTable, normalizeField, isAllowedTable, isValidField (valida que el valor no sea una palabra reservada, sea un numero puto (agrega que en el caso que el valor provenga de lz.estatico si es permitido un numero puro), que si el valor es * esta bien, que el valor puede empieza con [a-z0-9], puede tener _ en medio, pero debe termina en [a-z0-9], adicional a * o _ no puede tener otro carácter especial el valor)
+
+¿Debo rechazar la consulta si el campo no cumple, o solo marcarlo en la respuesta con un flag valid=false?
+
+R. Si marca la respuesta con un campos valid = false, en el front solo debera consumir los que son valid=true.
+
+
+El de los archivos json es:
+
+json/
+├── datos-objetivo-campos.json
+└── datos-objetivo.json
+
+El que es datos-objetivo.json, es para obtener las relaciones solo a nivel tablas.
+El datos-objetivo-campos.json es para las relaciones a nivel tablas y campos.
+
+El formato de los dos archivos JSON es: 
+[
+    {
+        "id":"7dc6b802-3b9d-4ab5-a544-81fd8d0f1b9a",
+        "consulta":"create table  ...",
+        "tabla_origen":"resultados_bipa_vpdpc.ctlg_transaccion_cobis",
+        "tabla_destino":"proceso_bipa_vpdpc.cobis_catalogo_codutx",
+        "campo_origen":"*",
+        "campo_destino":"*",
+        "transformacion_aplicada":null,
+        "recomendaciones":"post-scan tabla: patrón de esquema s_bani\/proceso\/resultados"
+    },
+    {
+        "id":"8f937a58-6b3c-4e1b-9b06-5322cf921804",
+        "consulta":"create table  s...",
+        "tabla_origen":"resultados_bipa_vpdpc.ctlg_transac_agrup_hogan",
+        "tabla_destino":"proceso_bipa_vpdpc.cobis_catalogo_codutx",
+        "campo_origen":"*",
+        "campo_destino":"*",
+        "transformacion_aplicada":null,
+        "recomendaciones":"post-scan tabla: patrón de esquema s_bani\/proceso\/resultados"
+    }
+]
+
+
+
+
+
+El front end tambien lo tiene que ajustar para que pueda consumir este backend de forma local, 
+el front debe permitir que se ingrese la ip a la cual apuntaran las consultas, es decir la ip del backend
